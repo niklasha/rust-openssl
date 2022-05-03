@@ -1589,7 +1589,7 @@ cfg_if! {
 }
 
 cfg_if! {
-    if #[cfg(ossl110)] {
+    if #[cfg(any(ossl110, libressl352))] {
         use ffi::X509_OBJECT_free;
     } else {
         #[allow(bad_style)]
