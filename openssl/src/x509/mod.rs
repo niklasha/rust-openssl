@@ -10,6 +10,7 @@
 use cfg_if::cfg_if;
 use foreign_types::{ForeignType, ForeignTypeRef};
 use libc::{c_int, c_long};
+use std::cmp::{self, Ordering};
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -227,7 +228,7 @@ impl X509Builder {
     /// the X.509 standard should pass `2` to this method.
     #[corresponds(X509_set_version)]
     pub fn set_version(&mut self, version: i32) -> Result<(), ErrorStack> {
-        unsafe { cvt(ffi::X509_set_version(self.0.as_ptr(), version.into())).map(|_| ()) }
+        unsafe { cvt(ffi::X509_set_version(self.0.as_ptr(), version as c_long)).map(|_| ()) }
     }
 
     /// Sets the serial number of the certificate.
@@ -600,6 +601,41 @@ impl ToOwned for X509Ref {
     }
 }
 
+impl Ord for X509Ref {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        // X509_cmp returns a number <0 for less than, 0 for equal and >0 for greater than.
+        // It can't fail if both pointers are valid, which we know is true.
+        let cmp = unsafe { ffi::X509_cmp(self.as_ptr(), other.as_ptr()) };
+        cmp.cmp(&0)
+    }
+}
+
+impl PartialOrd for X509Ref {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialOrd<X509> for X509Ref {
+    fn partial_cmp(&self, other: &X509) -> Option<cmp::Ordering> {
+        <X509Ref as PartialOrd<X509Ref>>::partial_cmp(self, other)
+    }
+}
+
+impl PartialEq for X509Ref {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == cmp::Ordering::Equal
+    }
+}
+
+impl PartialEq<X509> for X509Ref {
+    fn eq(&self, other: &X509) -> bool {
+        <X509Ref as PartialEq<X509Ref>>::eq(self, other)
+    }
+}
+
+impl Eq for X509Ref {}
+
 impl X509 {
     /// Returns a new builder.
     pub fn builder() -> Result<X509Builder, ErrorStack> {
@@ -700,6 +736,38 @@ impl Stackable for X509 {
     type StackType = ffi::stack_st_X509;
 }
 
+impl Ord for X509 {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        X509Ref::cmp(self, other)
+    }
+}
+
+impl PartialOrd for X509 {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        X509Ref::partial_cmp(self, other)
+    }
+}
+
+impl PartialOrd<X509Ref> for X509 {
+    fn partial_cmp(&self, other: &X509Ref) -> Option<cmp::Ordering> {
+        X509Ref::partial_cmp(self, other)
+    }
+}
+
+impl PartialEq for X509 {
+    fn eq(&self, other: &Self) -> bool {
+        X509Ref::eq(self, other)
+    }
+}
+
+impl PartialEq<X509Ref> for X509 {
+    fn eq(&self, other: &X509Ref) -> bool {
+        X509Ref::eq(self, other)
+    }
+}
+
+impl Eq for X509 {}
+
 /// A context object required to construct certain `X509` extension values.
 pub struct X509v3Context<'a>(ffi::X509V3_CTX, PhantomData<(&'a X509Ref, &'a ConfRef)>);
 
@@ -773,6 +841,17 @@ impl X509Extension {
 
             cvt_p(ffi::X509V3_EXT_nconf_nid(conf, context, name, value)).map(X509Extension)
         }
+    }
+
+    /// Adds an alias for an extension
+    ///
+    /// # Safety
+    ///
+    /// This method modifies global state without locking and therefore is not thread safe
+    #[corresponds(X509V3_EXT_add_alias)]
+    pub unsafe fn add_alias(to: Nid, from: Nid) -> Result<(), ErrorStack> {
+        ffi::init();
+        cvt(ffi::X509V3_EXT_add_alias(to.as_raw(), from.as_raw())).map(|_| ())
     }
 }
 
@@ -949,6 +1028,21 @@ impl X509NameRef {
         }
     }
 
+    /// Compare two names, like [`Ord`] but it may fail.
+    ///
+    /// With OpenSSL versions from 3.0.0 this may return an error if the underlying `X509_NAME_cmp`
+    /// call fails.
+    /// For OpenSSL versions before 3.0.0 it will never return an error, but due to a bug it may
+    /// spuriously return `Ordering::Less` if the `X509_NAME_cmp` call fails.
+    #[corresponds(X509_NAME_cmp)]
+    pub fn try_cmp(&self, other: &X509NameRef) -> Result<Ordering, ErrorStack> {
+        let cmp = unsafe { ffi::X509_NAME_cmp(self.as_ptr(), other.as_ptr()) };
+        if cfg!(ossl300) && cmp == -2 {
+            return Err(ErrorStack::get());
+        }
+        Ok(cmp.cmp(&0))
+    }
+
     to_der! {
         /// Serializes the certificate into a DER-encoded X509 name structure.
         ///
@@ -1068,7 +1162,13 @@ impl X509ReqBuilder {
     ///
     ///[`X509_REQ_set_version`]: https://www.openssl.org/docs/man1.1.0/crypto/X509_REQ_set_version.html
     pub fn set_version(&mut self, version: i32) -> Result<(), ErrorStack> {
-        unsafe { cvt(ffi::X509_REQ_set_version(self.0.as_ptr(), version.into())).map(|_| ()) }
+        unsafe {
+            cvt(ffi::X509_REQ_set_version(
+                self.0.as_ptr(),
+                version as c_long,
+            ))
+            .map(|_| ())
+        }
     }
 
     /// Set the issuer name.
@@ -1223,6 +1323,13 @@ impl X509ReqRef {
         /// [`i2d_X509_REQ`]: https://www.openssl.org/docs/man1.0.2/crypto/i2d_X509_REQ.html
         to_der,
         ffi::i2d_X509_REQ
+    }
+
+    to_pem! {
+        /// Converts the request to human readable text.
+        #[corresponds(X509_Req_print)]
+        to_text,
+        ffi::X509_REQ_print
     }
 
     /// Returns the numerical value of the version field of the certificate request.
