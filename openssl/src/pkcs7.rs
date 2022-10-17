@@ -299,7 +299,7 @@ mod tests {
         certs.push(cert.clone()).unwrap();
         let message: String = String::from("foo");
         let cipher = Cipher::des_ede3_cbc();
-        let flags = Pkcs7Flags::STREAM;
+        let flags = Pkcs7Flags::empty();
         let pkey = include_bytes!("../test/key.pem");
         let pkey = PKey::private_key_from_pem(pkey).unwrap();
 
@@ -325,7 +325,7 @@ mod tests {
         let cert = X509::from_pem(cert).unwrap();
         let certs = Stack::new().unwrap();
         let message = "foo";
-        let flags = Pkcs7Flags::STREAM | Pkcs7Flags::DETACHED;
+        let flags = Pkcs7Flags::DETACHED;
         let pkey = include_bytes!("../test/key.pem");
         let pkey = PKey::private_key_from_pem(pkey).unwrap();
         let mut store_builder = X509StoreBuilder::new().expect("should succeed");
@@ -367,7 +367,7 @@ mod tests {
         let cert = X509::from_pem(cert).unwrap();
         let certs = Stack::new().unwrap();
         let message = "foo";
-        let flags = Pkcs7Flags::STREAM;
+        let flags = Pkcs7Flags::empty();
         let pkey = include_bytes!("../test/key.pem");
         let pkey = PKey::private_key_from_pem(pkey).unwrap();
         let mut store_builder = X509StoreBuilder::new().expect("should succeed");
@@ -404,7 +404,7 @@ mod tests {
         let cert_digest = cert.digest(MessageDigest::sha256()).unwrap();
         let certs = Stack::new().unwrap();
         let message = "foo";
-        let flags = Pkcs7Flags::STREAM;
+        let flags = Pkcs7Flags::empty();
         let pkey = include_bytes!("../test/key.pem");
         let pkey = PKey::private_key_from_pem(pkey).unwrap();
         let mut store_builder = X509StoreBuilder::new().expect("should succeed");
